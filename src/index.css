@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    scroll-behavior: smooth;
+    color: #1a202c;
+    background-color: #ffffff;
+  }
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+}
+
+:root {
+  --color-health-green: #38A169;
+  --color-health-light: #48BB78;
+}
+
+@keyframes pulse-package {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(56, 161, 105, 0.5), 0 10px 25px -5px rgba(56, 161, 105, 0.2);
+  }
+  50% {
+    transform: scale(1.018);
+    box-shadow: 0 0 0 10px rgba(56, 161, 105, 0.18), 0 20px 35px -5px rgba(56, 161, 105, 0.35);
+  }
+}
+
+.animate-pulse-package {
+  animation: pulse-package 2s infinite ease-in-out;
+}
