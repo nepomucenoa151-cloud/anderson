@@ -135,6 +135,49 @@ const ProgressTracker = memo(function ProgressTracker({ hasAnalyzed }: { hasAnal
 
 /* 3. HERO & VÍDEO PRINCIPAL */
 const HeroSection = memo(function HeroSection() {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const postCmd = (func: string, args: (string | number)[] = []) => {
+      try {
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.postMessage(
+            JSON.stringify({ event: 'command', func, args }),
+            '*'
+          );
+        }
+      } catch {
+        // Safe cross-origin handling
+      }
+    };
+
+    const setHighVolume = () => {
+      postCmd('unMute');
+      postCmd('setVolume', [100]);
+    };
+
+    // Define volume alto logo no carregamento e após o player estar pronto
+    const t1 = setTimeout(setHighVolume, 600);
+    const t2 = setTimeout(setHighVolume, 1600);
+
+    // Garante volume 100% no primeiro gesto caso o navegador restrinja áudio de autoplay
+    const onUserGesture = () => {
+      setHighVolume();
+    };
+
+    window.addEventListener('click', onUserGesture, { once: true });
+    window.addEventListener('touchstart', onUserGesture, { once: true });
+    window.addEventListener('scroll', onUserGesture, { once: true });
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('click', onUserGesture);
+      window.removeEventListener('touchstart', onUserGesture);
+      window.removeEventListener('scroll', onUserGesture);
+    };
+  }, []);
+
   return (
     <section aria-label="Alerta e Chamada Principal" className="text-center pt-2 sm:pt-4 pb-1 space-y-3 sm:space-y-4 border-b border-slate-100">
       <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-slate-950 uppercase tracking-tight leading-snug sm:leading-tight max-w-2xl sm:max-w-3xl mx-auto">
@@ -148,20 +191,17 @@ const HeroSection = memo(function HeroSection() {
         <span className="text-[#38A169]">DIABETES TIPO 2.</span>
       </h1>
 
-      {/* VÍDEO PRINCIPAL DO DOUTOR COM AUTOPLAY */}
+      {/* VÍDEO PRINCIPAL DO DOUTOR COM AUTOPLAY E VOLUME ALTO */}
       <div className="w-full max-w-2xl mx-auto pt-2 px-1">
         <div className="relative w-full aspect-video rounded-2xl overflow-hidden border-2 border-slate-200 shadow-xl bg-black">
           <iframe
+            ref={iframeRef}
             className="w-full h-full object-cover"
-            src="https://www.youtube-nocookie.com/embed/CVsMl-Hv4oU?autoplay=1&mute=1&playsinline=1&controls=1&rel=0&modestbranding=1&enablejsapi=1"
+            src="https://www.youtube-nocookie.com/embed/CVsMl-Hv4oU?autoplay=1&mute=0&playsinline=1&controls=1&rel=0&modestbranding=1&enablejsapi=1"
             title="Vídeo Explicativo - Protocolo de Desparasitação"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowFullScreen
           />
-        </div>
-        <div className="flex items-center justify-center gap-2 mt-2 text-xs font-semibold text-slate-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
-          <span>🔊</span>
-          <span>Vídeo iniciado automaticamente. Caso esteja sem som, use o botão de volume do reprodutor!</span>
         </div>
       </div>
 
