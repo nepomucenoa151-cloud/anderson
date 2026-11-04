@@ -700,8 +700,10 @@ const TestimonialsSection = memo(function TestimonialsSection() {
 });
 
 /* 8. OFERTA & PACOTE COM VALOR ANCORADO */
+const CHECKOUT_LINK = 'https://pay.wiapy.com/YYrHEH5EzLbR';
+
 interface OfferSectionProps {
-  onOpenCheckout: () => void;
+  onOpenCheckout?: () => void;
   offerRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -801,16 +803,15 @@ const OfferSection = memo(function OfferSection({ onOpenCheckout, offerRef }: Of
             </div>
           </div>
 
-          {/* BOTÃO CTA VERDE DE DESTAQUE */}
+          {/* BOTÃO CTA VERDE DE DESTAQUE COM REDIRECIONAMENTO DIRETO */}
           <div className="pt-2">
-            <button
-              type="button"
-              onClick={onOpenCheckout}
-              className="w-full sm:w-auto sm:min-w-[340px] px-8 py-4 sm:py-5 rounded-full bg-[#38A169] hover:bg-[#2F855A] active:bg-[#276749] text-white font-black text-base sm:text-xl uppercase tracking-wider shadow-lg shadow-[#38A169]/35 hover:shadow-xl transition-all transform active:scale-95 cursor-pointer inline-flex items-center justify-center gap-2 border-2 border-emerald-300"
+            <a
+              href={CHECKOUT_LINK}
+              className="w-full sm:w-auto sm:min-w-[340px] px-8 py-4 sm:py-5 rounded-full bg-[#38A169] hover:bg-[#2F855A] active:bg-[#276749] text-white font-black text-base sm:text-xl uppercase tracking-wider shadow-lg shadow-[#38A169]/35 hover:shadow-xl transition-all transform active:scale-95 cursor-pointer inline-flex items-center justify-center gap-2 border-2 border-emerald-300 text-center"
             >
               <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
               <span>Acessar meu Protocolo Agora!</span>
-            </button>
+            </a>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-slate-500 pt-2 border-t border-[#38A169]/15">
@@ -1096,14 +1097,13 @@ const CheckoutModal = memo(function CheckoutModal({ isOpen, onClose }: CheckoutM
             </div>
 
             {/* Botão Final */}
-            <button
-              type="button"
-              onClick={() => setIsSuccessPaid(true)}
-              className="w-full py-3.5 rounded-xl bg-[#38A169] hover:bg-[#2F855A] text-white font-extrabold text-sm uppercase tracking-wide shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+            <a
+              href={CHECKOUT_LINK}
+              className="w-full py-3.5 rounded-xl bg-[#38A169] hover:bg-[#2F855A] text-white font-extrabold text-sm uppercase tracking-wide shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-center"
             >
               <Lock className="w-4 h-4" />
               <span>Confirmar e Acessar por R$ 37,90</span>
-            </button>
+            </a>
           </>
         ) : (
           <div className="text-center py-6 space-y-4">
