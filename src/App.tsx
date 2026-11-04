@@ -807,6 +807,15 @@ const OfferSection = memo(function OfferSection({ onOpenCheckout, offerRef }: Of
           <div className="pt-2">
             <a
               href={CHECKOUT_LINK}
+              onClick={() => {
+                if (typeof window !== 'undefined' && (window as any).fbq) {
+                  try {
+                    (window as any).fbq('track', 'InitiateCheckout', { currency: 'BRL', value: 37.90 });
+                  } catch {
+                    // Safe handling
+                  }
+                }
+              }}
               className="w-full sm:w-auto sm:min-w-[340px] px-8 py-4 sm:py-5 rounded-full bg-[#38A169] hover:bg-[#2F855A] active:bg-[#276749] text-white font-black text-base sm:text-xl uppercase tracking-wider shadow-lg shadow-[#38A169]/35 hover:shadow-xl transition-all transform active:scale-95 cursor-pointer inline-flex items-center justify-center gap-2 border-2 border-emerald-300 text-center"
             >
               <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
