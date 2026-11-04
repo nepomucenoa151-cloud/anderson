@@ -945,31 +945,31 @@ const PurchaseNotificationToast = memo(function PurchaseNotificationToast() {
   if (!currentPurchase) return null;
 
   return (
-    <div className="fixed top-4 sm:top-5 right-3 sm:right-6 z-50 max-w-xs sm:max-w-sm bg-white/95 backdrop-blur-md border-2 border-[#38A169] rounded-2xl p-3.5 shadow-2xl shadow-slate-900/15 flex items-start gap-3 transition-all">
-      <div className="w-9 h-9 rounded-full bg-[#EBF8F2] text-[#38A169] flex items-center justify-center shrink-0 border border-[#38A169]/30 mt-0.5">
-        <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+    <div className="fixed top-2.5 right-2 sm:top-5 sm:right-6 z-50 w-auto max-w-[245px] sm:max-w-[290px] bg-gradient-to-br from-[#166534] via-[#15803D] to-[#166534] text-white border border-emerald-300/40 rounded-xl sm:rounded-2xl p-2 sm:p-2.5 shadow-xl shadow-green-950/30 flex items-start gap-2 backdrop-blur-md transition-all">
+      <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/20 text-white flex items-center justify-center shrink-0 border border-white/30 mt-0.5">
+        <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
       </div>
-      <div className="flex-1 min-w-0 pr-1">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[#38A169] bg-[#EBF8F2] px-2 py-0.5 rounded-full">
+      <div className="flex-1 min-w-0 pr-0.5">
+        <div className="flex items-center justify-between gap-1 leading-none mb-1">
+          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-100 bg-white/20 px-1.5 py-0.5 rounded-full border border-white/20">
             Compra Confirmada
           </span>
-          <span className="text-[10px] text-slate-400 font-medium">{currentPurchase.time}</span>
+          <span className="text-[9px] text-emerald-200 font-medium shrink-0">{currentPurchase.time}</span>
         </div>
-        <p className="text-xs font-bold text-slate-900 mt-1 truncate">
+        <p className="text-[11px] sm:text-xs font-bold text-white truncate leading-tight">
           {currentPurchase.name}
         </p>
-        <p className="text-[11px] text-slate-600 font-medium">
+        <p className="text-[10px] text-emerald-100/90 truncate leading-tight mt-0.5">
           {currentPurchase.city} - {currentPurchase.uf}
         </p>
-        <p className="text-[11px] font-extrabold text-[#276749] mt-0.5">
-          ✓ Comprou o Pacote Completo (R$ 37,90)
+        <p className="text-[10px] sm:text-[11px] font-black text-yellow-300 leading-tight mt-1 truncate">
+          ✓ Pacote Completo (R$ 37,90)
         </p>
       </div>
       <button
         type="button"
         onClick={() => setCurrentPurchase(null)}
-        className="text-slate-400 hover:text-slate-600 p-0.5 rounded-full cursor-pointer"
+        className="text-emerald-200 hover:text-white p-0.5 -mr-0.5 -mt-0.5 rounded-full cursor-pointer hover:bg-white/10 transition-colors"
         aria-label="Fechar notificação"
       >
         <X className="w-3.5 h-3.5" />
