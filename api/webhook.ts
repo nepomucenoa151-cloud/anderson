@@ -1,24 +1,62 @@
 /**
  * Webhook Oficial Wiapy & Meta Conversions API (CAPI)
- * Protocolo Glicose Zero — https://protocologlicose.vercel.app/
+ * Documentação de Referência: https://help.wiapy.com/pt-br/article/webhook-jtggmu/
  * 
- * ETAPA 2, 3 e 4:
- * - Validação segura do cabeçalho Authorization via WIAPY_WEBHOOK_SECRET.
- * - Leitura dinâmica de payment.amount (em centavos) convertendo para reais (divisão por 100).
- * - NUNCA utiliza valores fixos: cada transação envia seu valor real (ex: R$ 47,90, R$ 97,00, R$ 37,90).
- * - Somente dispara evento Purchase quando payment.status for "paid".
- * - Tratamento específico para estornos/chargebacks, pagamentos pendentes e recusados.
- * - Deduplicação persistente via payment.id (event_id) com suporte a Vercel KV / Upstash Redis REST.
- * - user_data formatado segundo as especificações da Meta (SHA-256 em PII, DDI 55 no telefone, raw em fbc/fbp).
+ * Tratamento dos Status Oficiais da Wiapy:
+ * 1. "paid": Pagamento aprovado -> Converte payment.amount (centavos -> reais) e envia Purchase para a Meta.
+ * 2. "unpaid": Não pago / aguardando pagamento (PIX ou Boleto) -> Ignora Purchase.
+ * 3. "credit_card_declined": Cartão de crédito recusado -> Ignora Purchase.
+ * 4. "refunded": Pagamento estornado/reembolsado -> Registra estorno, sem novo Purchase.
+ * 5. "chargedback": Pagamento com chargeback/contestação -> Registra chargeback, sem novo Purchase.
+ * 6. "payment null" / ausente: Carrinho abandonado / lead checkout -> Identifica abandono, sem Purchase.
+ * 
+ * Conformidade e Validações:
+ * - Validação estrita do cabeçalho "Authorization" contra WIAPY_WEBHOOK_SECRET.
+ * - payment.id identifica unicamente a transação (usado como event_id estável).
+ * - tracking.fbc, tracking.fbp, tracking.ip e tracking.useragent aproveitados diretamente.
+ * - customer.email e customer.mobile_phone normalizados e criptografados em SHA-256 (com DDI 55).
+ * - Deduplicação persistente em Vercel KV / Upstash Redis (REST) + persistência local /tmp.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 const DEFAULT_PIXEL_ID = '1427229019213125';
+const LOCAL_TMP_FILE = path.join('/tmp', 'wiapy_processed_transactions.json');
 
-// Cache em memória local para a instância ativa da Serverless Function
+// Cache em memória local para a execução ativa
 const memoryTransactionsCache = new Set<string>();
+
+/**
+ * Lê IDs de transações processadas salvas no disco /tmp (sobrevive a warm reboots da Serverless Function)
+ */
+function readLocalFileTransactions(): Set<string> {
+  try {
+    if (fs.existsSync(LOCAL_TMP_FILE)) {
+      const raw = fs.readFileSync(LOCAL_TMP_FILE, 'utf-8');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return new Set(list);
+    }
+  } catch {
+    // Ignora erro de leitura em ambiente read-only estrito
+  }
+  return new Set();
+}
+
+/**
+ * Salva o ID da transação no disco /tmp
+ */
+function saveLocalFileTransaction(id: string): void {
+  try {
+    const set = readLocalFileTransactions();
+    set.add(id);
+    fs.writeFileSync(LOCAL_TMP_FILE, JSON.stringify(Array.from(set)));
+  } catch {
+    // Ignora erro de escrita caso /tmp não esteja acessível
+  }
+}
 
 /**
  * Hash SHA-256 padrão Meta (sempre minúsculo e sem espaços)
@@ -70,10 +108,10 @@ function formatPhoneE164(phone: string): string {
 }
 
 /**
- * Verifica se a transação já foi processada anteriormente.
- * Prioridade:
- * 1. Vercel KV / Upstash Redis (persistente entre todas as instâncias serverless).
- * 2. Cache em memória da instância atual.
+ * Controle de Deduplicação Persistente:
+ * 1. Consulta Vercel KV / Upstash Redis REST se as variáveis de ambiente estiverem ativas.
+ * 2. Consulta o arquivo local em /tmp.
+ * 3. Consulta o cache em memória.
  */
 async function isTransactionProcessed(paymentId: string): Promise<boolean> {
   const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -81,7 +119,7 @@ async function isTransactionProcessed(paymentId: string): Promise<boolean> {
 
   if (kvUrl && kvToken) {
     try {
-      const response = await fetch(`${kvUrl}/get/purchase_${paymentId}`, {
+      const response = await fetch(`${kvUrl}/get/wiapy_purchase_${paymentId}`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${kvToken}` }
       });
@@ -94,22 +132,27 @@ async function isTransactionProcessed(paymentId: string): Promise<boolean> {
     }
   }
 
+  if (readLocalFileTransactions().has(paymentId)) {
+    return true;
+  }
+
   return memoryTransactionsCache.has(paymentId);
 }
 
 /**
- * Registra a transação como processada para impedir duplicidades futuras.
+ * Grava a transação nos armazenamentos persistentes para evitar duplicidades
  */
 async function markTransactionProcessed(paymentId: string, details: { amount: number; date: string }): Promise<void> {
   memoryTransactionsCache.add(paymentId);
+  saveLocalFileTransaction(paymentId);
 
   const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (kvUrl && kvToken) {
     try {
-      // TTL de 30 dias (2.592.000 segundos) para deduplicação contínua
-      await fetch(`${kvUrl}/set/purchase_${paymentId}/${encodeURIComponent(JSON.stringify(details))}?EX=2592000`, {
+      // Salva no Vercel KV / Upstash com TTL de 30 dias (2.592.000 segundos)
+      await fetch(`${kvUrl}/set/wiapy_purchase_${paymentId}/${encodeURIComponent(JSON.stringify(details))}?EX=2592000`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${kvToken}` }
       });
@@ -120,7 +163,6 @@ async function markTransactionProcessed(paymentId: string, details: { amount: nu
 }
 
 export default async function handler(req: IncomingMessage & { body?: any; query?: any }, res: ServerResponse) {
-  // Cabeçalhos de resposta
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -132,7 +174,7 @@ export default async function handler(req: IncomingMessage & { body?: any; query
     return;
   }
 
-  // Endpoint informativo e diagnóstico de saúde do Webhook
+  // Diagnóstico de saúde e estado da integração
   if (req.method === 'GET') {
     const hasKv = Boolean(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL);
     res.statusCode = 200;
@@ -141,11 +183,11 @@ export default async function handler(req: IncomingMessage & { body?: any; query
         status: 'online',
         service: 'Wiapy Webhook -> Meta Conversions API (CAPI)',
         endpoint: '/api/webhook',
-        pixelIdConfigured: process.env.META_PIXEL_ID || DEFAULT_PIXEL_ID,
+        pixelId: process.env.META_PIXEL_ID || DEFAULT_PIXEL_ID,
         metaTokenConfigured: Boolean(process.env.META_ACCESS_TOKEN),
         webhookSecretConfigured: Boolean(process.env.WIAPY_WEBHOOK_SECRET),
-        persistentDeduplicationActive: hasKv,
-        persistenceType: hasKv ? 'Vercel KV / Upstash Redis' : 'Memory Cache (Recomendado ativar Vercel KV)',
+        persistenceMode: hasKv ? 'Vercel KV / Upstash Redis (Persistência Distribuída Global)' : 'Arquivo Local /tmp + Memória (Ative Vercel KV para multi-region)',
+        supportedStatuses: ['paid', 'unpaid', 'credit_card_declined', 'refunded', 'chargedback', 'payment null'],
         timestamp: new Date().toISOString()
       })
     );
@@ -158,27 +200,23 @@ export default async function handler(req: IncomingMessage & { body?: any; query
     return;
   }
 
-  // ==========================================
-  // ETAPA 2: AUTENTICAÇÃO DO WEBHOOK WIAPY
-  // ==========================================
-  const configuredSecret = process.env.WIAPY_WEBHOOK_SECRET;
-  if (configuredSecret) {
-    const rawAuthHeader = (
+  // 1. VALIDAÇÃO DO CABEÇALHO AUTHORIZATION
+  const webhookSecret = process.env.WIAPY_WEBHOOK_SECRET;
+  if (webhookSecret) {
+    const rawAuth = (
       req.headers['authorization'] ||
       req.headers['x-wiapy-secret'] ||
       req.headers['x-webhook-secret'] ||
       ''
     ).toString();
 
-    // Suporta tanto "Bearer <secret>" quanto o segredo direto no header
-    const providedToken = rawAuthHeader.replace(/^Bearer\s+/i, '').trim();
-
-    if (providedToken !== configuredSecret.trim()) {
+    const token = rawAuth.replace(/^Bearer\s+/i, '').trim();
+    if (token !== webhookSecret.trim()) {
       res.statusCode = 401;
       res.end(
         JSON.stringify({
           error: 'Não autorizado.',
-          message: 'Cabeçalho Authorization ou segredo do Webhook inválido.'
+          message: 'Cabeçalho Authorization inválido. Verifique o segredo configurado na Wiapy.'
         })
       );
       return;
@@ -202,176 +240,177 @@ export default async function handler(req: IncomingMessage & { body?: any; query
     }
   }
 
-  // ==========================================
-  // EXTRAÇÃO DOS CAMPOS DA WIAPY
-  // ==========================================
-  // Estrutura padrão Wiapy:
-  // payment.id, payment.status, payment.amount, payment.payment_method, payment.type
-  // customer.email, customer.mobile_phone, customer.name
-  // tracking.ip, tracking.useragent, tracking.fbc, tracking.fbp
-  // checkout.title
-  const payment = body?.payment || {};
-  const customer = body?.customer || {};
-  const tracking = body?.tracking || {};
-  const checkout = body?.checkout || {};
+  // 2. STATUS OFICIAL: PAYMENT NULL / AUSENTE (CARRINHO ABANDONADO)
+  if (!body?.payment || body.payment === null) {
+    res.statusCode = 200;
+    res.end(
+      JSON.stringify({
+        received: true,
+        dispatched: false,
+        event_type: 'abandoned_cart',
+        action: 'abandoned_cart_ignored',
+        message: 'Payload com payment null recebido (carrinho abandonado). Evento Purchase NÃO disparado.'
+      })
+    );
+    return;
+  }
 
-  const paymentId = String(payment?.id || body?.id || '').trim();
-  const rawStatus = String(payment?.status || body?.status || '').trim().toLowerCase();
+  const payment = body.payment;
+  const paymentId = String(payment.id || '').trim();
+  const paymentStatus = String(payment.status || '').trim().toLowerCase();
 
   if (!paymentId) {
     res.statusCode = 400;
-    res.end(JSON.stringify({ error: 'Campo payment.id obrigatório ausente no payload.' }));
+    res.end(JSON.stringify({ error: 'Campo payment.id obrigatório ausente na documentação da Wiapy.' }));
     return;
   }
 
-  // ==========================================
-  // TRATAMENTO DE STATUS E SEGURANÇA
-  // ==========================================
-  // 1. Tratamento específico para Estornos e Chargebacks
-  if (rawStatus === 'refunded' || rawStatus === 'chargeback' || rawStatus === 'reversed') {
+  // 3. STATUS OFICIAL: UNPAID (NÃO PAGO / AGUARDANDO PAGAMENTO PIX OU BOLETO)
+  if (paymentStatus === 'unpaid') {
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         received: true,
         dispatched: false,
-        status: rawStatus,
+        status: 'unpaid',
+        paymentId,
+        action: 'unpaid_ignored',
+        message: `Transação '${paymentId}' com status 'unpaid' (aguardando pagamento). Evento Purchase NÃO disparado.`
+      })
+    );
+    return;
+  }
+
+  // 4. STATUS OFICIAL: CREDIT_CARD_DECLINED (CARTÃO RECUSADO)
+  if (paymentStatus === 'credit_card_declined') {
+    res.statusCode = 200;
+    res.end(
+      JSON.stringify({
+        received: true,
+        dispatched: false,
+        status: 'credit_card_declined',
+        paymentId,
+        action: 'credit_card_declined_ignored',
+        message: `Transação '${paymentId}' recusada pela operadora de cartão de crédito. Evento Purchase NÃO disparado.`
+      })
+    );
+    return;
+  }
+
+  // 5. STATUS OFICIAL: REFUNDED (PAGAMENTO ESTORNADO / REEMBOLSADO)
+  if (paymentStatus === 'refunded') {
+    res.statusCode = 200;
+    res.end(
+      JSON.stringify({
+        received: true,
+        dispatched: false,
+        status: 'refunded',
         paymentId,
         action: 'refund_registered',
-        message: `Transação '${paymentId}' registrada como estorno/chargeback. Nenhuma compra disparada.`
+        message: `Transação '${paymentId}' registrada como estorno/reembolso. Nenhuma nova compra disparada.`
       })
     );
     return;
   }
 
-  // 2. Tratamento para Pagamento Pendente / Aguardando Pagamento (PIX / Boleto)
-  if (rawStatus === 'pending' || rawStatus === 'waiting_payment') {
+  // 6. STATUS OFICIAL: CHARGEDBACK (PAGAMENTO COM CHARGEBACK / CONTESTAÇÃO)
+  if (paymentStatus === 'chargedback') {
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         received: true,
         dispatched: false,
-        status: rawStatus,
+        status: 'chargedback',
         paymentId,
-        action: 'pending_ignored',
-        message: `Transação '${paymentId}' com status pendente. Aguardando aprovação real.`
+        action: 'chargeback_registered',
+        message: `Transação '${paymentId}' registrada como chargeback/contestação. Nenhuma nova compra disparada.`
       })
     );
     return;
   }
 
-  // 3. Tratamento para Cartão Recusado, Cancelado ou Abandonado
-  if (
-    rawStatus === 'refused' ||
-    rawStatus === 'declined' ||
-    rawStatus === 'canceled' ||
-    rawStatus === 'cancelled' ||
-    rawStatus === 'abandoned'
-  ) {
+  // 7. STATUS OFICIAL: PAID (PAGAMENTO APROVADO COM SUCESSO)
+  if (paymentStatus !== 'paid') {
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         received: true,
         dispatched: false,
-        status: rawStatus,
+        status: paymentStatus,
         paymentId,
-        action: 'refused_ignored',
-        message: `Transação '${paymentId}' não foi aprovada (${rawStatus}). Evento Purchase NÃO disparado.`
+        reason: `Status '${paymentStatus}' não corresponde a uma compra aprovada ('paid'). Evento Purchase NÃO disparado.`
       })
     );
     return;
   }
 
-  // 4. Somente quando payment.status for "paid" (ou "approved")
-  const isPaid = rawStatus === 'paid' || rawStatus === 'approved';
-  if (!isPaid) {
+  // 8. DEDUPLICAÇÃO PERSISTENTE (GARANTE 1 ÚNICO PURCHASE POR TRANSAÇÃO)
+  const isAlreadyProcessed = await isTransactionProcessed(paymentId);
+  if (isAlreadyProcessed) {
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         received: true,
         dispatched: false,
-        status: rawStatus,
+        status: 'paid',
         paymentId,
-        reason: `Status '${rawStatus}' não corresponde a uma compra aprovada. Evento Purchase NÃO disparado.`
+        reason: `Transação '${paymentId}' já foi processada anteriormente. Deduplicação persistente ativa (bloqueio de reenvio).`
       })
     );
     return;
   }
 
-  // ==========================================
-  // ETAPA 4: DEDUPLICAÇÃO PERSISTENTE
-  // ==========================================
-  const alreadyProcessed = await isTransactionProcessed(paymentId);
-  if (alreadyProcessed) {
-    res.statusCode = 200;
-    res.end(
-      JSON.stringify({
-        received: true,
-        dispatched: false,
-        paymentId,
-        reason: `Transação '${paymentId}' já foi processada anteriormente. Deduplicação garantida (1 compra única por transação).`
-      })
-    );
-    return;
-  }
-
-  // ==========================================
-  // ETAPA 3: LEITURA E CONVERSÃO DO VALOR REAL
-  // ==========================================
-  // Lê payment.amount (em centavos) e converte para reais dividindo por 100.
-  // NUNCA utiliza valores fixos pré-definidos no código.
-  const rawPaymentAmount = payment?.amount ?? body?.amount;
-  if (rawPaymentAmount === undefined || rawPaymentAmount === null || rawPaymentAmount === '') {
+  // 9. CONVERSÃO DE CENTAVOS PARA REAIS (payment.amount / 100)
+  // Conforme documentação da Wiapy: R$ 17,70 vem como 1770; R$ 47,90 vem como 4790; R$ 97,00 vem como 9700.
+  if (payment.amount === undefined || payment.amount === null || payment.amount === '') {
     res.statusCode = 400;
-    res.end(JSON.stringify({ error: 'Campo payment.amount ausente no payload.' }));
+    res.end(JSON.stringify({ error: 'Campo payment.amount ausente no payload da Wiapy.' }));
     return;
   }
 
-  const numericCentavos = Number(rawPaymentAmount);
-  if (isNaN(numericCentavos) || numericCentavos <= 0) {
+  const rawCentavos = Number(payment.amount);
+  if (isNaN(rawCentavos) || rawCentavos <= 0) {
     res.statusCode = 400;
-    res.end(JSON.stringify({ error: 'Campo payment.amount inválido (deve ser numérico e maior que zero).' }));
+    res.end(JSON.stringify({ error: 'Campo payment.amount inválido (deve ser maior que zero).' }));
     return;
   }
 
-  // Se o valor vier em centavos inteiros (ex: 4790 para R$ 47,90 ou 9700 para R$ 97,00), divide por 100.
-  // Se por ventura já vier fracionado em reais (ex: 47.90), preserva o número decimal.
+  // Converte centavos para reais com precisão decimal
   let finalValueInReais: number;
-  if (Number.isInteger(numericCentavos) && numericCentavos >= 100) {
-    finalValueInReais = Number((numericCentavos / 100).toFixed(2));
+  if (Number.isInteger(rawCentavos) && rawCentavos >= 100) {
+    finalValueInReais = Number((rawCentavos / 100).toFixed(2));
   } else {
-    finalValueInReais = Number(numericCentavos.toFixed(2));
+    finalValueInReais = Number(rawCentavos.toFixed(2));
   }
 
-  // ==========================================
-  // ETAPA 3: DADOS DO CLIENTE & LGPD (SHA-256)
-  // ==========================================
-  const customerEmail = String(customer?.email || body?.email || '').trim().toLowerCase();
-  const rawCustomerPhone = String(customer?.mobile_phone || customer?.phone || body?.mobile_phone || body?.phone || '');
-  const customerPhone = formatPhoneE164(rawCustomerPhone);
-  const fullName = String(customer?.name || body?.name || '').trim();
+  // 10. EXTRAÇÃO E NORMALIZAÇÃO DE DADOS (CUSTOMER & TRACKING DA WIAPY)
+  const customer = body.customer || {};
+  const tracking = body.tracking || {};
+  const checkout = body.checkout || {};
 
-  // Dados de rastreamento do cliente
+  const customerEmail = String(customer.email || '').trim().toLowerCase();
+  const rawCustomerPhone = String(customer.mobile_phone || customer.phone || '');
+  const customerPhone = formatPhoneE164(rawCustomerPhone);
+  const fullName = String(customer.name || '').trim();
+
+  // Dados técnicos de rastreamento documentados na Wiapy
   const clientIp = String(
-    tracking?.ip ||
-    body?.ip ||
-    customer?.ip ||
+    tracking.ip ||
     req.headers['x-forwarded-for'] ||
     req.socket?.remoteAddress ||
     ''
   ).split(',')[0].trim();
 
   const clientUserAgent = String(
-    tracking?.useragent ||
-    tracking?.user_agent ||
-    body?.useragent ||
+    tracking.useragent ||
     req.headers['user-agent'] ||
     ''
   ).trim();
 
-  const fbc = tracking?.fbc || body?.fbc || undefined;
-  const fbp = tracking?.fbp || body?.fbp || undefined;
+  const fbc = tracking.fbc ? String(tracking.fbc).trim() : undefined;
+  const fbp = tracking.fbp ? String(tracking.fbp).trim() : undefined;
 
-  // Montagem do user_data conforme especificações estritas da Meta
+  // Montagem do objeto user_data com hash SHA-256 (LGPD / Meta)
   const userData: Record<string, any> = {};
 
   if (customerEmail) {
@@ -392,7 +431,7 @@ export default async function handler(req: IncomingMessage & { body?: any; query
     }
   }
 
-  // DDI do Brasil para todos os compradores nacionais
+  // País Brasil padrão em SHA-256
   userData.country = [sha256('br')];
 
   if (clientIp) {
@@ -404,32 +443,30 @@ export default async function handler(req: IncomingMessage & { body?: any; query
   }
 
   if (fbp) {
-    userData.fbp = String(fbp);
+    userData.fbp = fbp;
   }
 
   if (fbc) {
-    userData.fbc = String(fbc);
+    userData.fbc = fbc;
   }
 
-  // ==========================================
-  // ETAPA 3: PAYLOAD CONVERSIONS API (META)
-  // ==========================================
+  // 11. MONTAGEM DO EVENTO PURCHASE PARA A META GRAPH API
+  const productTitle = String(checkout.title || 'Protocolo Glicose Zero').trim();
   const metaAccessToken = process.env.META_ACCESS_TOKEN;
   const pixelId = process.env.META_PIXEL_ID || DEFAULT_PIXEL_ID;
-  const productTitle = String(checkout?.title || body?.product?.name || 'Protocolo Glicose Zero').trim();
 
   const capiPayload = {
     data: [
       {
         event_name: 'Purchase',
         event_time: Math.floor(Date.now() / 1000),
-        event_id: paymentId, // Identificador único e estável para deduplicação
+        event_id: paymentId, // ID estável de deduplicação da Wiapy
         event_source_url: 'https://protocologlicose.vercel.app/',
         action_source: 'website',
         user_data: userData,
         custom_data: {
           currency: 'BRL',
-          value: finalValueInReais, // Valor real individual da transação (sem valor fixo)
+          value: finalValueInReais, // Valor real individual convertido de centavos para reais
           content_name: productTitle,
           content_type: 'product',
           content_ids: ['protocolo-glicose-zero'],
@@ -442,16 +479,17 @@ export default async function handler(req: IncomingMessage & { body?: any; query
   // Se o token da Meta não estiver configurado na Vercel
   if (!metaAccessToken) {
     await markTransactionProcessed(paymentId, { amount: finalValueInReais, date: new Date().toISOString() });
-    console.warn(`[Wiapy Webhook] Transação '${paymentId}' aprovada (R$ ${finalValueInReais}), mas META_ACCESS_TOKEN não está configurada na Vercel.`);
+    console.warn(`[Wiapy Webhook] Transação '${paymentId}' aprovada (R$ ${finalValueInReais}), mas META_ACCESS_TOKEN não está configurada.`);
     res.statusCode = 200;
     res.end(
       JSON.stringify({
         received: true,
         dispatched: false,
+        status: 'paid',
         paymentId,
         value: finalValueInReais,
         currency: 'BRL',
-        warning: 'Transação validada com sucesso. Para enviar à Meta via Conversions API, configure a variável META_ACCESS_TOKEN nas configurações da Vercel.'
+        warning: 'Transação validada com sucesso. Para enviar à Meta via Conversions API, configure META_ACCESS_TOKEN na Vercel.'
       })
     );
     return;
@@ -472,14 +510,14 @@ export default async function handler(req: IncomingMessage & { body?: any; query
       res.statusCode = 502;
       res.end(
         JSON.stringify({
-          error: 'Erro no retorno da Meta Conversions API.',
+          error: 'Falha no envio para a Meta Conversions API.',
           details: metaData
         })
       );
       return;
     }
 
-    // Registra como processado no armazenamento persistente
+    // Registra como processada no armazenamento persistente
     await markTransactionProcessed(paymentId, {
       amount: finalValueInReais,
       date: new Date().toISOString()
@@ -490,6 +528,7 @@ export default async function handler(req: IncomingMessage & { body?: any; query
       JSON.stringify({
         received: true,
         dispatched: true,
+        status: 'paid',
         paymentId,
         value: finalValueInReais,
         currency: 'BRL',
