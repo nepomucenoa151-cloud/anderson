@@ -810,7 +810,15 @@ const OfferSection = memo(function OfferSection({ onOpenCheckout, offerRef }: Of
               onClick={() => {
                 if (typeof window !== 'undefined' && (window as any).fbq) {
                   try {
-                    (window as any).fbq('track', 'InitiateCheckout', { currency: 'BRL', value: 37.90 });
+                    (window as any).fbq('track', 'InitiateCheckout', {
+                      content_name: 'Protocolo Glicose Zero - Pacote Completo',
+                      content_category: 'Saúde Metabólica',
+                      content_ids: ['protocolo-glicose-zero-37'],
+                      content_type: 'product',
+                      value: 37.90,
+                      currency: 'BRL',
+                      num_items: 1,
+                    });
                   } catch {
                     // Safe handling
                   }
@@ -1108,6 +1116,23 @@ const CheckoutModal = memo(function CheckoutModal({ isOpen, onClose }: CheckoutM
             {/* Botão Final */}
             <a
               href={CHECKOUT_LINK}
+              onClick={() => {
+                if (typeof window !== 'undefined' && (window as any).fbq) {
+                  try {
+                    (window as any).fbq('track', 'InitiateCheckout', {
+                      content_name: 'Protocolo Glicose Zero - Pacote Completo',
+                      content_category: 'Saúde Metabólica',
+                      content_ids: ['protocolo-glicose-zero-37'],
+                      content_type: 'product',
+                      value: 37.90,
+                      currency: 'BRL',
+                      num_items: 1,
+                    });
+                  } catch {
+                    // Safe handling
+                  }
+                }
+              }}
               className="w-full py-3.5 rounded-xl bg-[#38A169] hover:bg-[#2F855A] text-white font-extrabold text-sm uppercase tracking-wide shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-center"
             >
               <Lock className="w-4 h-4" />
@@ -1147,6 +1172,47 @@ export default function App() {
 
   const analysisRef = useRef<HTMLDivElement>(null);
   const offerRef = useRef<HTMLDivElement>(null);
+
+  // Disparar ViewContent uma única vez quando o visitante visualizar a seção da oferta
+  useEffect(() => {
+    if (!offerRef.current || typeof window === 'undefined') return;
+    let hasTrackedViewContent = false;
+
+    const trackViewContent = () => {
+      if (hasTrackedViewContent) return;
+      hasTrackedViewContent = true;
+      if ((window as any).fbq) {
+        try {
+          (window as any).fbq('track', 'ViewContent', {
+            content_name: 'Protocolo Glicose Zero - Pacote Completo',
+            content_category: 'Saúde Metabólica & Desparasitação',
+            content_ids: ['protocolo-glicose-zero-37'],
+            content_type: 'product',
+            value: 37.90,
+            currency: 'BRL',
+          });
+        } catch {
+          // Safe error handling
+        }
+      }
+    };
+
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              trackViewContent();
+              observer.disconnect();
+            }
+          });
+        },
+        { threshold: 0.15 }
+      );
+      observer.observe(offerRef.current);
+      return () => observer.disconnect();
+    }
+  }, []);
 
   const handleAnalyze = useCallback(() => {
     setIsAnalyzing(true);
