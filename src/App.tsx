@@ -700,7 +700,46 @@ const TestimonialsSection = memo(function TestimonialsSection() {
 });
 
 /* 8. OFERTA & PACOTE COM VALOR ANCORADO */
-const CHECKOUT_LINK = 'https://pay.wiapy.com/YYrHEH5EzLbR';
+const CHECKOUT_BASE_URL = 'https://pay.wiapy.com/YYrHEH5EzLbR';
+
+/**
+ * Constrói a URL do checkout externo preservando UTMs e cookies do Meta Pixel (_fbp e _fbc)
+ * para maximizar a Qualidade de Correspondência de Eventos (EMQ) na plataforma de pagamento.
+ */
+function buildTrackedCheckoutUrl(): string {
+  if (typeof window === 'undefined') return CHECKOUT_BASE_URL;
+  try {
+    const url = new URL(CHECKOUT_BASE_URL);
+    const searchParams = new URLSearchParams(window.location.search);
+
+    // Preserva parâmetros de tráfego pago (Google, Meta, TikTok, etc.)
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'src', 'sck'].forEach((key) => {
+      const val = searchParams.get(key);
+      if (val) url.searchParams.set(key, val);
+    });
+
+    // Repassa cookies de identificação primária da Meta para atribuição precisa
+    const getCookie = (name: string) => {
+      const match = document.cookie.match(new RegExp('(^|;\\s*)(' + name + ')=([^;]*)'));
+      return match ? decodeURIComponent(match[3]) : null;
+    };
+
+    const fbp = getCookie('_fbp');
+    if (fbp && !url.searchParams.has('fbp')) {
+      url.searchParams.set('fbp', fbp);
+    }
+
+    const fbclid = searchParams.get('fbclid');
+    const fbc = getCookie('_fbc') || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
+    if (fbc && !url.searchParams.has('fbc')) {
+      url.searchParams.set('fbc', fbc);
+    }
+
+    return url.toString();
+  } catch {
+    return CHECKOUT_BASE_URL;
+  }
+}
 
 interface OfferSectionProps {
   onOpenCheckout?: () => void;
@@ -806,23 +845,31 @@ const OfferSection = memo(function OfferSection({ onOpenCheckout, offerRef }: Of
           {/* BOTÃO CTA VERDE DE DESTAQUE COM REDIRECIONAMENTO DIRETO */}
           <div className="pt-2">
             <a
-              href={CHECKOUT_LINK}
-              onClick={() => {
+              href={CHECKOUT_BASE_URL}
+              onClick={(e) => {
+                const eventId = 'ic_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
                 if (typeof window !== 'undefined' && (window as any).fbq) {
                   try {
-                    (window as any).fbq('track', 'InitiateCheckout', {
-                      content_name: 'Protocolo Glicose Zero - Pacote Completo',
-                      content_category: 'Saúde Metabólica',
-                      content_ids: ['protocolo-glicose-zero-37'],
-                      content_type: 'product',
-                      value: 37.90,
-                      currency: 'BRL',
-                      num_items: 1,
-                    });
+                    (window as any).fbq(
+                      'track',
+                      'InitiateCheckout',
+                      {
+                        content_name: 'Protocolo Glicose Zero - Pacote Completo',
+                        content_category: 'Saúde Metabólica',
+                        content_ids: ['protocolo-glicose-zero-37'],
+                        content_type: 'product',
+                        value: 37.90,
+                        currency: 'BRL',
+                        num_items: 1,
+                      },
+                      { eventID: eventId }
+                    );
                   } catch {
-                    // Safe handling
+                    // Safe error handling
                   }
                 }
+                const destination = buildTrackedCheckoutUrl();
+                e.currentTarget.setAttribute('href', destination);
               }}
               className="w-full sm:w-auto sm:min-w-[340px] px-8 py-4 sm:py-5 rounded-full bg-[#38A169] hover:bg-[#2F855A] active:bg-[#276749] text-white font-black text-base sm:text-xl uppercase tracking-wider shadow-lg shadow-[#38A169]/35 hover:shadow-xl transition-all transform active:scale-95 cursor-pointer inline-flex items-center justify-center gap-2 border-2 border-emerald-300 text-center"
             >
@@ -1115,23 +1162,31 @@ const CheckoutModal = memo(function CheckoutModal({ isOpen, onClose }: CheckoutM
 
             {/* Botão Final */}
             <a
-              href={CHECKOUT_LINK}
-              onClick={() => {
+              href={CHECKOUT_BASE_URL}
+              onClick={(e) => {
+                const eventId = 'ic_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
                 if (typeof window !== 'undefined' && (window as any).fbq) {
                   try {
-                    (window as any).fbq('track', 'InitiateCheckout', {
-                      content_name: 'Protocolo Glicose Zero - Pacote Completo',
-                      content_category: 'Saúde Metabólica',
-                      content_ids: ['protocolo-glicose-zero-37'],
-                      content_type: 'product',
-                      value: 37.90,
-                      currency: 'BRL',
-                      num_items: 1,
-                    });
+                    (window as any).fbq(
+                      'track',
+                      'InitiateCheckout',
+                      {
+                        content_name: 'Protocolo Glicose Zero - Pacote Completo',
+                        content_category: 'Saúde Metabólica',
+                        content_ids: ['protocolo-glicose-zero-37'],
+                        content_type: 'product',
+                        value: 37.90,
+                        currency: 'BRL',
+                        num_items: 1,
+                      },
+                      { eventID: eventId }
+                    );
                   } catch {
-                    // Safe handling
+                    // Safe error handling
                   }
                 }
+                const destination = buildTrackedCheckoutUrl();
+                e.currentTarget.setAttribute('href', destination);
               }}
               className="w-full py-3.5 rounded-xl bg-[#38A169] hover:bg-[#2F855A] text-white font-extrabold text-sm uppercase tracking-wide shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 text-center"
             >
@@ -1183,14 +1238,20 @@ export default function App() {
       hasTrackedViewContent = true;
       if ((window as any).fbq) {
         try {
-          (window as any).fbq('track', 'ViewContent', {
-            content_name: 'Protocolo Glicose Zero - Pacote Completo',
-            content_category: 'Saúde Metabólica & Desparasitação',
-            content_ids: ['protocolo-glicose-zero-37'],
-            content_type: 'product',
-            value: 37.90,
-            currency: 'BRL',
-          });
+          const eventId = 'vc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+          (window as any).fbq(
+            'track',
+            'ViewContent',
+            {
+              content_name: 'Protocolo Glicose Zero - Pacote Completo',
+              content_category: 'Saúde Metabólica & Desparasitação',
+              content_ids: ['protocolo-glicose-zero-37'],
+              content_type: 'product',
+              value: 37.90,
+              currency: 'BRL',
+            },
+            { eventID: eventId }
+          );
         } catch {
           // Safe error handling
         }
